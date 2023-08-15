@@ -1,1 +1,20 @@
+# environment
 .env
+.virtual/
+
+# cache
+.DS_Store
+__pycache__/
+
+# article data
+links/
+articles/
+summary/
+
+
+# newscat model
+newscat/
+
+
+
+
