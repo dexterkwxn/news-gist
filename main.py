@@ -4,6 +4,7 @@ import time
 import os
 import re
 import sys
+import openai
 from settings import get_settings
 from langchain.utilities import GoogleSearchAPIWrapper
 from agent import create_agent
@@ -21,12 +22,13 @@ TODO:
 
 os.environ["GOOGLE_CSE_ID"] = get_settings().GOOGLE_CSE_ID
 os.environ["GOOGLE_API_KEY"] = get_settings().GOOGLE_API_KEY
-os.environ['OPENAI_API_KEY'] = get_settings().OPENAI_API_KEY
+openai.api_key = get_settings().OPENAI_API_KEY
 
 search = GoogleSearchAPIWrapper()
 
 LINKS_ADDR = "links"
 ARTICLES_ADDR = "articles"
+SUMMARIES_ADDR = "summary"
 
 search_terms = [
     'Global Economy',
@@ -59,7 +61,7 @@ def get_all_results(query):
         for i in range(1): # number of pages of search term
             results.extend(get_results_on_page(i+1)(query))
     except Exception as e:
-        print(e)
+        print("get_all_results() - ", query, e)
     return results
 
 def search_all_terms():
@@ -82,7 +84,6 @@ def remove_home_pages(links):
 def extract_articles(links, query):
     try:
         os.makedirs(ARTICLES_ADDR, exist_ok=True)
-        os.makedirs(f'{ARTICLES_ADDR}/{query}', exist_ok=True)
         print(f"{len(links)} links found.\nRemoving duplicates...")
         file_links_mappings = {}
         links = list(set(links))
@@ -106,12 +107,16 @@ def extract_articles(links, query):
             if not len(hyphenated_terms):
                 continue
 
-            title = hyphenated_terms[-1]
-            file_path = f'{ARTICLES_ADDR}/{query}/{title}.txt' 
-            os.system(f'newscat {link} | fmt > {file_path}')
-            file_paths.append(file_path)
-
             try:
+                title = hyphenated_terms[-1]
+                folder_name = query.replace(' ', '')
+                os.makedirs(f'{ARTICLES_ADDR}/{folder_name}', exist_ok=True)
+                file_path = f'{ARTICLES_ADDR}/{folder_name}/{title}.txt' 
+                cmd = f"newscat {link} | fmt > {file_path}"
+                os.system(cmd)
+                
+                file_paths.append(file_path)
+
                 with open(file_path, 'r') as f:
                     text = f.readlines()
                     if len(text) < 10:
@@ -128,45 +133,85 @@ def extract_articles(links, query):
             print("\nFile Links Mappings saved successfully to file")
 
         end_time = time.perf_counter()
-        print(f"\n\nStatistics:")
+        print("\n\n")
+        print(f"Statistics:")
         print(f"Total files extracted: {len(file_links_mappings)}")
         print(f"Total time taken: {end_time - start_time:0.4f} seconds")
+        print("---------------------------------------------------------------\n\n")
     except Exception as e:
         print("Error:", e)
 
 def summarise_articles():
-    pass
+    # summarise everything for now, add selection later on
+    print("Starting to Summarise Articles")
+    for query in search_terms:
+        folder_name = query.replace(' ', '')
+        os.makedirs(f'{SUMMARIES_ADDR}/{folder_name}', exist_ok=True)
+        try:
+            for r, d, files in os.walk(f'{ARTICLES_ADDR}/{folder_name}'):
+                for file in files:
+                    print(f"{file}...", end='')
+                    with open(f'{ARTICLES_ADDR}/{folder_name}/{file}', 'r') as f:
+                        raw_text = '\n'.join(f.readlines())
+                        summary = summarise_one_article(raw_text)
+                    with open(f'{SUMMARIES_ADDR}/{folder_name}/{file}', 'w') as f:
+                        f.write(summary)
+                        print("Done")
+        except Exception as e:
+            print(f"\nsummarise_articles() - {e}")
+
+def summarise_one_article(text):
+    res = openai.ChatCompletion.create(
+      model="gpt-3.5-turbo",
+      messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": f"Summarise this article: \n\n{text}"},
+        ]
+    )
+    summary = ""
+    try:
+        summary = res["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"summarise_one_article() - {e}")
+    return summary
+
 
 def main(do_search=None, do_extract_articles=None):
-    print("Searching for articles...")
     if do_search:
+        print("Searching for articles...")
         os.makedirs(LINKS_ADDR, exist_ok=True)
         for query in search_terms:
             results = get_all_results(query)
             links = [res['link'] if 'link' in res else '' for res in results]
             links = list(set(remove_home_pages(links)))
-            os.makedirs(f'{LINKS_ADDR}/{query}', exist_ok=True)
-            with open(f'{LINKS_ADDR}/{query}/links.csv', 'w') as f:
+            folder_name = query.replace(' ', '')
+            os.makedirs(f'{LINKS_ADDR}/{folder_name}', exist_ok=True)
+            with open(f'{LINKS_ADDR}/{folder_name}/links.csv', 'w') as f:
                 for l in links:
                     f.write(l+'\n')
-    else:
-        with open('links.csv', 'r') as f:
-            links = f.readlines()
-
 
     if do_extract_articles:
         print("Extracting articles...")
         for query in search_terms:
-            with open(f'{LINKS_ADDR}/{query}/links.csv', 'r') as f:
-                links = f.readlines()
-                extract_articles(links, query)
+            folder_name = query.replace(' ', '')
+            try:
+                with open(f'{LINKS_ADDR}/{folder_name}/links.csv', 'r') as f:
+                    links = f.readlines()
+                    # remove new lines
+                    links = list(map(lambda x : x.strip(), links))
+                    extract_articles(links, query)
+            except Exception as e:
+                print(f"main(): do_extract_articles - {e}")
 
     summarise_articles()
 
     
 if __name__ == "__main__":
     # Check the number of command line arguments
-    if len(sys.argv) != 3:
+    try:
+        arg1 = int(sys.argv[1]) 
+        arg2 = int(sys.argv[2])
+    except:
         print("Usage: python main.py <arg1> <arg2>")
         print("\nArguments:")
         print("  <arg1>  - search for articles. 0 to skip, 1 to search.")
@@ -175,6 +220,6 @@ if __name__ == "__main__":
         print("  python main.py 1 1 - searches and extracts articles, and then initialize agent")
         print("  python main.py 0 0 - initialize agent directly with articles in ./articles folder")
         sys.exit(1)
-    
-    main(sys.argv[1], sys.argv[2])
+
+    main(arg1, arg2)
 

@@ -6,6 +6,11 @@
 
 The script first searches the custom google search engine and collects all urls given by the search engine. Articles are then extracted through their url by using [newscat](https://github.com/slyrz/newscat/tree/master) to get the text of the articles. We then push these text files to the agent. The agent creates their embeddings, and uses them when querying.
 
+### Requirements
+
+1. Python 3.9
+2. OpenAI API Key
+
 ### Components
 
 1. Custom Google Search Engine ([link](https://programmablesearchengine.google.com/))
